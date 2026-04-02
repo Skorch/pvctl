@@ -188,19 +188,11 @@ def install_sync_cron(interval: int) -> str:
     return cron_expr
 
 
-def sync_schedule(entries: list[ScheduleEntry]) -> list[tuple[str, str | None, bool]]:
-    """Sync hub schedule entries to crontab.
-
-    Replaces all pvctl schedule entries (not the sync entry).
-    Returns list of (entry_name, cron_expression, enabled).
-    """
-    pvctl_path = get_pvctl_path()
-    existing = read_crontab()
-
-    # Remove existing schedule entries (keep sync entry and non-pvctl entries)
-    cleaned = [line for line in existing if CRON_TAG not in line]
-
-    results: list[tuple[str, str | None, bool]] = []
+def _build_schedule_lines(
+    entries: list[ScheduleEntry], pvctl_path: str
+) -> list[str]:
+    """Build cron lines for schedule entries."""
+    lines = []
     for entry in entries:
         cmd = (
             f'{pvctl_path} scene activate "{entry.collection_name}" --quiet'
@@ -209,15 +201,39 @@ def sync_schedule(entries: list[ScheduleEntry]) -> list[tuple[str, str | None, b
             f"{entry.cron_expression} {cmd} "
             f"2>&1 | logger -t pvctl {CRON_TAG} {entry.name}"
         )
-
         if entry.enabled:
-            cleaned.append(cron_line)
-            results.append((entry.name, entry.cron_expression, True))
+            lines.append(cron_line)
         else:
-            cleaned.append(f"# DISABLED: {cron_line}")
-            results.append((entry.name, entry.cron_expression, False))
+            lines.append(f"# DISABLED: {cron_line}")
+    return lines
 
-    write_crontab(cleaned)
+
+def sync_schedule(entries: list[ScheduleEntry]) -> list[tuple[str, str | None, bool]]:
+    """Sync hub schedule entries to crontab.
+
+    Only writes crontab if entries have actually changed (avoids triggering
+    macOS admin permission prompt on every sync).
+
+    Returns list of (entry_name, cron_expression, enabled).
+    """
+    pvctl_path = get_pvctl_path()
+    existing = read_crontab()
+
+    # Build what the new schedule lines should be
+    new_schedule_lines = _build_schedule_lines(entries, pvctl_path)
+
+    # Extract current schedule lines (not sync, not non-pvctl)
+    current_schedule_lines = [line for line in existing if CRON_TAG in line]
+
+    # Only write if changed
+    if new_schedule_lines != current_schedule_lines:
+        cleaned = [line for line in existing if CRON_TAG not in line]
+        cleaned.extend(new_schedule_lines)
+        write_crontab(cleaned)
+
+    results: list[tuple[str, str | None, bool]] = []
+    for entry in entries:
+        results.append((entry.name, entry.cron_expression, entry.enabled))
     return results
 
 
