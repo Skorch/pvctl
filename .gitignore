@@ -10,3 +10,7 @@ build/
 
 # Exploration script output — real hub data, don't commit
 scripts/responses/
+
+# Agent skills
+.agents/
+skills-lock.json
